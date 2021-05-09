@@ -8,10 +8,8 @@ import subprocess
 import torch
 import cv2
 
-
 import neural_renderer
 import numpy as np
-
 import tqdm
 import imageio
 
@@ -47,7 +45,7 @@ def run():
     parser.add_argument('-ab1', '--adam_beta1', type=float, default=0.9)
     parser.add_argument('-ab2', '--adam_beta2', type=float, default=0.999)
     parser.add_argument('-bs', '--batch_size', type=int, default=4)
-    parser.add_argument('-ni', '--num_iteration', type=int, default=1000)
+    parser.add_argument('-ni', '--num_iteration', type=int, default=1)
     parser.add_argument('-g', '--gpu', type=int, default=0)
     args = parser.parse_args()
 
@@ -73,16 +71,11 @@ def run():
         camera_distance_noise=args.camera_distance_noise,
         texture_size=args.texture_size,
     )
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=args.adam_lr,
-                                 weight_decay=args.adam_beta1)
-    #optimizer = neural_renderer.Adam(alpha=args.adam_lr, beta1=args.adam_beta1)
-    #optimizer.setup(model)
-
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.adam_lr, betas=(args.adam_beta1,args.adam_beta2))
     # optimization
     loop = tqdm.tqdm(range(args.num_iteration))
     for _ in loop:
         optimizer.zero_grad()
-        #optimizer.target.cleargrads()
         loss = model(args.batch_size)
         loss.backward()
         optimizer.step()
@@ -95,13 +88,19 @@ def run():
     for num, azimuth in enumerate(loop):
         loop.set_description('Drawing')
         model.renderer.eye = neural_renderer.get_points_from_angles(2.732, 30, azimuth)
-        x,y,z = model.mesh.get_batch(1)
+        x = torch.unsqueeze(model.vertices,0)
+        x = x.repeat(1,1,1)
         x = x.to(device)
+
+        y = torch.unsqueeze(model.state_dict()['faces'],0)
+        y = y.repeat(1,1,1)
         y = y.to(device)
+
+        z = torch.unsqueeze(model.state_dict()['textures'],0)
+        z = torch.sigmoid(z.repeat(1,1,1,1,1,1))
         z = z.to(device)
         images,_,_ = model.renderer.render(x,y,z)
         image = images[0].permute((1, 2, 0)).cpu().detach().numpy()
-        #scipy.misc.toimage(image, cmin=0, cmax=1).save('%s/_tmp_%04d.png' % (directory_output, num))
         output_images.append(image)
     imageio.mimsave(args.filename_output,output_images)
 

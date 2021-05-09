@@ -8,12 +8,13 @@ import cv2
 import numpy as np
 import math
 from functools import reduce
+import matplotlib.pyplot as plt
+
 import neural_renderer
-from .model_with_hooks import FeatureExtractor
+from .model_with_hooks import NewModel
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 torch.autograd.set_detect_anomaly(True)
-
 
 class StyleTransferModel(nn.Module):
     def __init__(
@@ -44,7 +45,7 @@ class StyleTransferModel(nn.Module):
         self.xp = np
 
         # load feature extractor
-        self.vgg16 = FeatureExtractor(layers=[0,2,5,7]).to(device)
+        self.vgg16 = NewModel(output_layers=[2,7,14,21]).to(device)
 
         # load reference image
         reference_image = cv2.imread(filename_style)
@@ -53,12 +54,22 @@ class StyleTransferModel(nn.Module):
         reference_image = reference_image[:, :, :3].transpose((2, 0, 1))[None, :, :, :]
         reference_image = self.xp.array(reference_image)
         with torch.autograd.no_grad():
-            features_ref = [f.data for f in self.extract_style_feature(reference_image)]
+            features_ref = [f.data for f in self.extract_style_feature(torch.from_numpy(reference_image))]
         self.features_ref = features_ref
         self.background_color = reference_image.mean((0, 2, 3))
+        
         # load .obj
-        self.mesh = neural_renderer.Mesh.fromobj(filename_mesh, texture_size)
-        self.vertices_original = self.mesh.vertices
+        
+        #self.mesh = neural_renderer.Mesh.fromobj(filename_mesh, texture_size)
+        vertices,faces = neural_renderer.load_obj(filename_mesh)
+        shape = (faces.shape[0], texture_size, texture_size, texture_size, 3)
+        textures = 0.05*torch.randn(*shape)
+        
+        self.vertices = nn.Parameter(vertices)
+        self.register_buffer('faces', faces)
+        self.register_buffer('textures', textures)
+
+        self.vertices_original = self.vertices
 
         # setup renderer
         renderer = neural_renderer.Renderer()
@@ -66,23 +77,19 @@ class StyleTransferModel(nn.Module):
         renderer.background_color = self.background_color
         self.renderer = renderer
 
+
     def extract_style_feature(self, images, masks=None):
-        xp = self.xp
-        images -= images.mean(axis=(-2,-1),keepdims=1)
-        images = torch.from_numpy(images)
+        mean = np.array([103.939, 116.779, 123.68], 'float32')  # BGR
+        images = torch.from_numpy(images.cpu().detach().numpy()[:, ::-1]*255 - mean[None, :, None, None])
         images = images.to(device)
-        features = self.vgg16.forward(images)
+        features = self.vgg16.forward(images).values()
         if masks is None:
             masks = torch.ones((images.shape[0], images.shape[2], images.shape[3]))
-        # print('Features=',len(features))
-        # for key,value in features.items():
-        #     print('key ',key)
-        #     print('value ',value.shape)
         style_features = []
-        for key,feature in features.items():
-            scale = math.ceil(masks.shape[-1] / feature.shape[-1])
+        for feature in features:
+            scale = int(masks.shape[-1] / feature.shape[-1])
             m = F.avg_pool2d(masks[:, None, :, :], scale, scale).to(device)
-            dim = feature.shape[0]
+            dim = feature.shape[1]
 
             m = m.reshape((m.shape[0], -1))
             f2 = feature.permute((0, 2, 3, 1))
@@ -95,14 +102,14 @@ class StyleTransferModel(nn.Module):
         return style_features
 
     def compute_style_loss(self, features):
-        loss = [torch.sum(torch.square(f - fr.expand(f.shape))) for f, fr in zip(features, self.features_ref)]
+        loss = [torch.mean(torch.square(f - fr.expand(f.shape))) for f, fr in zip(features, self.features_ref)]
         loss = reduce(lambda a, b: a + b, loss)
         batch_size = features[0].shape[0]
         loss /= batch_size
         return loss
 
     def compute_content_loss(self):
-        loss = torch.sum(torch.square(self.mesh.vertices - self.vertices_original))
+        loss = torch.mean(torch.square(self.vertices - self.vertices_original))
         return loss
 
     def compute_tv_loss(self, images, masks):
@@ -110,7 +117,7 @@ class StyleTransferModel(nn.Module):
         s2 = torch.square(images[:, :, :-1, 1:] - images[:, :, :-1, :-1])
         masks = masks[:, None, :-1, :-1].expand(s1.shape)        
         masks = masks.data == 1
-        return torch.sum(masks * (s1 + s2))
+        return torch.mean(masks * (s1 + s2))
 
     def __call__(self, batch_size):
         xp = self.xp
@@ -132,21 +139,40 @@ class StyleTransferModel(nn.Module):
         self.renderer.light_direction = directions
 
         # compute loss
-        x,y,z = self.mesh.get_batch(batch_size)
+        #x,y,z = self.mesh.get_batch(batch_size)
+        
+        x = torch.unsqueeze(self.vertices,0)
+        x = x.repeat(batch_size,1,1)
         x = x.to(device)
+
+        y = torch.unsqueeze(self.state_dict()['faces'],0)
+        y = y.repeat(batch_size,1,1)
         y = y.to(device)
+
+        z = torch.unsqueeze(self.state_dict()['textures'],0)
+        z = torch.sigmoid(z.repeat(batch_size,1,1,1,1,1))
         z = z.to(device)
+
         images,_,_ = self.renderer.render(x,y,z)
-        masks = self.renderer.render_silhouettes(*self.mesh.get_batch(batch_size)[:2])
+        # for image in images:
+        #     plt.imshow(image.permute(1,2,0).cpu().detach().numpy())
+        #     plt.show()
+        masks = self.renderer.render_silhouettes(x,y)
+        # for image in masks:
+        #     plt.imshow(image.cpu().detach().numpy())
+        #     plt.show()
         # import IPython
         # IPython.embed()
-        features = self.extract_style_feature(images.cpu().detach().numpy(), masks)
+        with torch.autograd.no_grad():
+            features = self.extract_style_feature(images, masks)
+
         loss_style = self.compute_style_loss(features)
         loss_content = self.compute_content_loss()
+        print('Content Loss=',loss_content)
         loss_tv = self.compute_tv_loss(images, masks)
         loss = self.lambda_style * loss_style + self.lambda_content * loss_content + self.lambda_tv * loss_tv
 
         # set default lighting direction
         self.renderer.light_direction = [0, 1, 0]
-        print(loss)
+
         return loss
