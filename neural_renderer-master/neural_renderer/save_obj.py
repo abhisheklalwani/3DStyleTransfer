@@ -38,6 +38,7 @@ def create_texture_image(textures, texture_size_out=16):
 
 
 def save_obj(filename, vertices, faces, textures=None):
+    print("the file name is %s"%(filename))
     assert vertices.ndimension() == 2
     assert faces.ndimension() == 2
 
@@ -80,3 +81,5 @@ def save_obj(filename, vertices, faces, textures=None):
         with open(filename_mtl, 'w') as f:
             f.write('newmtl %s\n' % material_name)
             f.write('map_Kd %s\n' % os.path.basename(filename_texture))
+
+   

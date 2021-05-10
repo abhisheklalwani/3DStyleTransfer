@@ -12,7 +12,7 @@ import neural_renderer
 import numpy as np
 import tqdm
 import imageio
-
+from texture_mapping import MapTexture
 import style_transfer_3d
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -47,6 +47,7 @@ def run():
     parser.add_argument('-bs', '--batch_size', type=int, default=4)
     parser.add_argument('-ni', '--num_iteration', type=int, default=1)
     parser.add_argument('-g', '--gpu', type=int, default=0)
+    parser.add_argument('-rd', '--result_directory', type=str, default='./examples/data/results')
     args = parser.parse_args()
 
     # create output directory
@@ -102,7 +103,33 @@ def run():
         images,_,_ = model.renderer.render(x,y,z)
         image = images[0].permute((1, 2, 0)).cpu().detach().numpy()
         output_images.append(image)
+
+    ##Saving the GIF
     imageio.mimsave(args.filename_output,output_images)
+
+    # ##Saving the Object
+    # vertices = model.vertices
+    # faces = model.state_dict()['faces']
+    # textures = model.state_dict()['textures']
+
+    # print(vertices.shape)
+    # print(faces.shape)
+    # print(textures.shape)
+
+    # filename = "stylized_" + args.filename_mesh.split("/")[-1]
+    # # filename = os.path.abspath(filename)
+    # filename_stylized_obj = args.result_directory + "/" + filename
+
+    # neural_renderer.save_obj(filename_stylized_obj, vertices, faces, textures)
+
+    # ##Mapping the texture
+    # filename = "stylized_and_textured_" + args.filename_mesh.split("/")[-1]
+    # filename_stylized_and_textured_obj = args.result_directory + "/" + filename
+    # filename = "stylized_and_textured_" + args.filename_output.split("/")[-1]
+    # filename_stylized_and_textured_gif = args.result_directory + "/" + filename
+    # map_texture_obj = MapTexture(filename_stylized_obj, args.filename_style, filename_stylized_and_textured_gif)
+    # map_texture_obj.train()
+    # map_texture_obj.save_obj(filename_stylized_and_textured_obj)
 
 
 if __name__ == '__main__':
