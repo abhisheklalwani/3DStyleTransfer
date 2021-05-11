@@ -8,17 +8,17 @@ Rushikesh Dudhat (rdudhat@umass.edu) <br>
 
 # System requirement
 
-GPU
-Cuda 11.2
-torch
-numpy
-skimage
-tqdm
-imageio
-glob
-matplotlib
-cv2
-torchvision
+GPU </br>
+Cuda 11.2 </br>
+torch </br>
+numpy </br>
+skimage </br>
+tqdm </br>
+imageio </br>
+glob </br>
+matplotlib </br>
+cv2 </br>
+torchvision </br>
 
 # Installing Required Packages  
 
