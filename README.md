@@ -16,7 +16,7 @@ Please note that this contribution is only a rough estimate of the code written 
 In reality, all the code was worked on by everyone over iterations. </br>
 
 
-# System requirement
+# System requirements
 
 GPU </br>
 Cuda 11/11.2 (should work on 12 as well but we did not get a chance to test on it) </br>
