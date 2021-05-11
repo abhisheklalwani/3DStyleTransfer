@@ -6,6 +6,13 @@ Abhishek Lalwani (alalwani@umass.edu) <br>
 Himanshu Gupta (hgupta@umass.edu) <br>
 Rushikesh Dudhat (rdudhat@umass.edu) <br>
 
+# Contribution Split
+
+Abhishek Lalwani (alalwani@umass.edu) <br>
+Himanshu Gupta (hgupta@umass.edu) <br>
+Rushikesh Dudhat (rdudhat@umass.edu) <br>
+
+
 # System requirement
 
 GPU </br>
