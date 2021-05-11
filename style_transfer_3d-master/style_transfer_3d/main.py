@@ -9,12 +9,16 @@ import numpy as np
 import math
 from functools import reduce
 import matplotlib.pyplot as plt
-
+import imageio
+from skimage.transform import resize
+from PIL import Image
+from skimage.io import imread, imsave
 import neural_renderer
-from .model_with_hooks import NewModel
+import torchvision.transforms as transforms
+from torchvision.utils import save_image
+from .StyleLoss import get_style_model_and_losses, image_loader, run_style_transfer
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-torch.autograd.set_detect_anomaly(True)
 
 class StyleTransferModel(nn.Module):
     def __init__(
@@ -29,9 +33,9 @@ class StyleTransferModel(nn.Module):
             lr_vertices=0.01,
             lr_textures=1.0,
             lambda_style=1,
-            lambda_content=2e9,
-            lambda_tv=1e7,
-            image_size=224,
+            lambda_content=1e5,
+            lambda_tv=1e2,
+            image_size=256,
     ):
         super(StyleTransferModel, self).__init__()
         self.image_size = image_size
@@ -44,72 +48,60 @@ class StyleTransferModel(nn.Module):
         self.lambda_tv = lambda_tv
         self.xp = np
 
-        # load feature extractor
-        self.vgg16 = NewModel(output_layers=[2,7,14,21]).to(device)
-
         # load reference image
-        reference_image = cv2.imread(filename_style)
-        reference_image = cv2.resize(reference_image, (image_size, image_size))
-        reference_image = reference_image.astype('float32') / 255.
-        reference_image = reference_image[:, :, :3].transpose((2, 0, 1))[None, :, :, :]
-        reference_image = self.xp.array(reference_image)
-        with torch.autograd.no_grad():
-            features_ref = [f.data for f in self.extract_style_feature(torch.from_numpy(reference_image))]
-        self.features_ref = features_ref
-        self.background_color = reference_image.mean((0, 2, 3))
-        
-        # load .obj
-        
-        #self.mesh = neural_renderer.Mesh.fromobj(filename_mesh, texture_size)
-        vertices,faces = neural_renderer.load_obj(filename_mesh)
-        shape = (faces.shape[0], texture_size, texture_size, texture_size, 3)
-        textures = 0.05*torch.randn(*shape)
-        
-        self.vertices = nn.Parameter(vertices)
-        self.register_buffer('faces', faces)
-        self.register_buffer('textures', textures)
+        self.reference_image = imread(filename_style).astype('float32') / 255.
+        #self.reference_image = cv2.resize(self.reference_image,(image_size,image_size))
+        self.reference_image = torch.from_numpy(self.reference_image).permute(2,0,1)[None, ::].to(device)
+        self.cnn = models.vgg19(pretrained=True).features.to(device).eval()
+        for param in self.cnn.parameters():
+            param.requires_grad = False
+        self.cnn_normalization_mean = torch.tensor([0.485, 0.456, 0.406]).to(device)
+        self.cnn_normalization_std = torch.tensor([0.229, 0.224, 0.225]).to(device)
+        self.style_layers = ['conv_2', 'conv_4', 'conv_7', 'conv_10']
 
-        self.vertices_original = self.vertices
+        self.background_color = self.reference_image.mean((0, 2, 3))
+        
+        # load .obj        
+        vertices,faces = neural_renderer.load_obj(filename_mesh)
+        self.vertices_original = torch.clone(vertices[None,:,:]).detach()
+        self.vertices = nn.Parameter(vertices[None,:,:])
+        
+        self.register_buffer('faces', faces[None, :, :])
+
+        texture_size = 4
+        textures = torch.zeros(1, self.faces.shape[1], texture_size, texture_size, texture_size, 3, dtype=torch.float32)
+        self.textures = nn.Parameter(textures)
 
         # setup renderer
-        renderer = neural_renderer.Renderer()
-        renderer.image_size = image_size
-        renderer.background_color = self.background_color
+        renderer = neural_renderer.Renderer(camera_mode='look_at')
+        renderer.perspective = False
+        renderer.light_intensity_directional = 0.0
+        renderer.light_intensity_ambient = 1.0
         self.renderer = renderer
 
+    def image_loader(image_name,imsize,device):
+        loader = transforms.Compose([transforms.Resize((imsize,imsize)),transforms.ToTensor()])
+        image = Image.open(image_name)
+        # fake batch dimension required to fit network's input dimensions
+        image = loader(image).unsqueeze(0)
+        return image.to(device, torch.float)
 
-    def extract_style_feature(self, images, masks=None):
-        mean = np.array([103.939, 116.779, 123.68], 'float32')  # BGR
-        images = torch.from_numpy(images.cpu().detach().numpy()[:, ::-1]*255 - mean[None, :, None, None])
-        images = images.to(device)
-        features = self.vgg16.forward(images).values()
-        if masks is None:
-            masks = torch.ones((images.shape[0], images.shape[2], images.shape[3]))
-        style_features = []
-        for feature in features:
-            scale = int(masks.shape[-1] / feature.shape[-1])
-            m = F.avg_pool2d(masks[:, None, :, :], scale, scale).to(device)
-            dim = feature.shape[1]
-
-            m = m.reshape((m.shape[0], -1))
-            f2 = feature.permute((0, 2, 3, 1))
-            f2 = f2.reshape((f2.shape[0], -1, f2.shape[-1]))
-            f2 *= torch.sqrt(m)[:, :, None]
-            f2 = torch.matmul(f2.permute((0, 2, 1)), f2)
-            f2 /= dim * m.sum(axis=1)[:, None, None]
-            style_features.append(f2)
-
-        return style_features
-
-    def compute_style_loss(self, features):
-        loss = [torch.mean(torch.square(f - fr.expand(f.shape))) for f, fr in zip(features, self.features_ref)]
-        loss = reduce(lambda a, b: a + b, loss)
-        batch_size = features[0].shape[0]
-        loss /= batch_size
-        return loss
+    def compute_style_loss(self, images):
+        style_loss = 0
+        # print('Reference Image',self.reference_image)
+        # print('Content Image',images[0])
+        # plt.imshow(self.reference_image[0].permute(1,2,0).cpu().detach().numpy())
+        # plt.show()
+        # plt.imshow(images[0].permute(1,2,0).cpu().detach().numpy())
+        # plt.show()
+        for image in images:
+            image = image.unsqueeze(0)
+            style_loss += (run_style_transfer(self.cnn,self.cnn_normalization_mean,self.cnn_normalization_std,image,self.reference_image,self.style_layers))*100000
+            style_loss += torch.sum((image - self.reference_image) ** 2)
+        return style_loss
 
     def compute_content_loss(self):
-        loss = torch.mean(torch.square(self.vertices - self.vertices_original))
+        loss = torch.sum(torch.square(self.vertices - self.vertices_original))
         return loss
 
     def compute_tv_loss(self, images, masks):
@@ -117,43 +109,27 @@ class StyleTransferModel(nn.Module):
         s2 = torch.square(images[:, :, :-1, 1:] - images[:, :, :-1, :-1])
         masks = masks[:, None, :-1, :-1].expand(s1.shape)        
         masks = masks.data == 1
-        return torch.mean(masks * (s1 + s2))
+        return torch.sum(masks * (s1 + s2))
 
     def __call__(self, batch_size):
         xp = self.xp
 
         # set random viewpoints
-        self.renderer.eye = neural_renderer.get_points_from_angles(
-            distance=(
-                    torch.from_numpy(xp.ones(batch_size, 'float32') * self.camera_distance +
-                    xp.random.normal(size=batch_size).astype('float32') * self.camera_distance_noise)),
-            elevation=torch.from_numpy(xp.random.uniform(self.elevation_min, self.elevation_max, batch_size).astype('float32')),
-            azimuth=torch.from_numpy(xp.random.uniform(0, 360, size=batch_size).astype('float32')))
-
-        # set random lighting direction
-        angles = xp.random.uniform(0, 360, size=batch_size).astype('float32')
-        y = xp.ones(batch_size, 'float32') * xp.cos(xp.radians(30).astype('float32'))
-        x = xp.ones(batch_size, 'float32') * xp.sin(xp.radians(30).astype('float32')) * xp.sin(xp.radians(angles))
-        z = xp.ones(batch_size, 'float32') * xp.sin(xp.radians(30).astype('float32')) * xp.cos(xp.radians(angles))
-        directions = xp.concatenate((x[:, None], y[:, None], z[:, None]), axis=1)
-        self.renderer.light_direction = directions
+        self.renderer.eye = neural_renderer.get_points_from_angles(2.732, 0, np.random.uniform(0, 360))
 
         # compute loss
-        #x,y,z = self.mesh.get_batch(batch_size)
         
-        x = torch.unsqueeze(self.vertices,0)
-        x = x.repeat(batch_size,1,1)
+        x = self.vertices.repeat(batch_size,1,1)
         x = x.to(device)
 
-        y = torch.unsqueeze(self.state_dict()['faces'],0)
-        y = y.repeat(batch_size,1,1)
+        y = self.faces.repeat(batch_size,1,1)
         y = y.to(device)
 
-        z = torch.unsqueeze(self.state_dict()['textures'],0)
-        z = torch.sigmoid(z.repeat(batch_size,1,1,1,1,1))
+        z = self.textures.repeat(batch_size,1,1,1,1,1)
         z = z.to(device)
 
-        images,_,_ = self.renderer.render(x,y,z)
+        images = self.renderer.render_rgb(x,y,torch.tanh(z))
+        #images = torch.flip(images,dims=[1])
         # for image in images:
         #     plt.imshow(image.permute(1,2,0).cpu().detach().numpy())
         #     plt.show()
@@ -161,18 +137,24 @@ class StyleTransferModel(nn.Module):
         # for image in masks:
         #     plt.imshow(image.cpu().detach().numpy())
         #     plt.show()
+        #     break
         # import IPython
         # IPython.embed()
-        with torch.autograd.no_grad():
-            features = self.extract_style_feature(images, masks)
-
-        loss_style = self.compute_style_loss(features)
+        loss_style = self.compute_style_loss(images)
         loss_content = self.compute_content_loss()
-        print('Content Loss=',loss_content)
         loss_tv = self.compute_tv_loss(images, masks)
-        loss = self.lambda_style * loss_style + self.lambda_content * loss_content + self.lambda_tv * loss_tv
+        # print('Content weight=',self.lambda_content)
+        # print('Content Loss=',loss_content)
+        # print('Style weight=',self.lambda_style)
+        # print('Style Loss=',loss_style)
+        # print('TV Loss=',loss_tv)
 
+        # print('Content Loss (UPGRADED)=',self.lambda_content*loss_content)
+        # print('Style weight=',self.lambda_style)
+        # print('Style Loss (UPGRADED)=',self.lambda_style*loss_style)
+        # print('TV Loss=(UPGRADED)',self.lambda_tv*loss_tv)
+        
+        loss = self.lambda_style * loss_style + self.lambda_content * loss_content + self.lambda_tv * loss_tv
         # set default lighting direction
-        self.renderer.light_direction = [0, 1, 0]
 
         return loss
