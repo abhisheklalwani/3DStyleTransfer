@@ -33,8 +33,6 @@ class Model(nn.Module):
 
         # load reference image
         image_ref = torch.from_numpy(resize((imread(filename_ref).astype('float32') / 255.), (256, 256))).permute(2,0,1)[None, ::]
-        print("The reference image shape is")
-        print(image_ref.shape)
         self.register_buffer('image_ref', image_ref)
 
         # setup renderer
@@ -85,58 +83,12 @@ class MapTexture():
             images, _, _ = model.renderer(model.vertices, model.faces, torch.tanh(model.textures))
             image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))
             imsave('/tmp/_tmp_%04d.png' % num, image)
-        print("The gif image path is %s" % (self.filename_output_gif))
         make_gif(self.filename_output_gif)
 
         self.model = model
 
     def save_obj(self, filename):
-        print("In texture mapping the file name is %s"%(filename))
         vertices = self.model.vertices
         faces = self.model.faces
         textures = self.model.textures
-        print("In texture mapping")
-        print(vertices.shape)
-        print(faces.shape)
-        print(textures.shape)
-
-        # filename = "stylized_textured_" + self.filename_obj.split("/")[-1]
-        # filename = os.path.abspath(filename)
-
         nr.save_obj(filename, torch.squeeze(vertices), torch.squeeze(faces), torch.squeeze(textures))
-
-
-
-# def main():
-#     parser = argparse.ArgumentParser()
-#     parser.add_argument('-io', '--filename_obj', type=str, default=os.path.join(data_dir, 'teapot.obj'))
-#     parser.add_argument('-ir', '--filename_ref', type=str, default=os.path.join(data_dir, 'picasso.jpg'))
-#     parser.add_argument('-or', '--filename_output', type=str, default=os.path.join(data_dir, 'example3_result.gif'))
-#     parser.add_argument('-g', '--gpu', type=int, default=0)
-#     args = parser.parse_args()
-
-#     model = Model(args.filename_obj, args.filename_ref)
-#     model.cuda()
-
-#     optimizer = torch.optim.Adam(model.parameters(), lr=0.1, betas=(0.5,0.999))
-#     loop = tqdm.tqdm(range(300))
-#     for _ in loop:
-#         loop.set_description('Optimizing')
-#         optimizer.zero_grad()
-#         loss = model()
-#         loss.backward()
-#         optimizer.step()
-
-#     # draw object
-#     loop = tqdm.tqdm(range(0, 360, 4))
-#     for num, azimuth in enumerate(loop):
-#         loop.set_description('Drawing')
-#         model.renderer.eye = nr.get_points_from_angles(2.732, 0, azimuth)
-#         images, _, _ = model.renderer(model.vertices, model.faces, torch.tanh(model.textures))
-#         image = images.detach().cpu().numpy()[0].transpose((1, 2, 0))
-#         imsave('/tmp/_tmp_%04d.png' % num, image)
-#     make_gif(args.filename_output)
-
-
-# if __name__ == '__main__':
-#     main()

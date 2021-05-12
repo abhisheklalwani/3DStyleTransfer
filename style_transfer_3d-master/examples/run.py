@@ -89,6 +89,7 @@ def run():
 
     # draw object
     #model.renderer.background_color = (1, 1, 1)
+    print("Saving the object after performing style tra")
     loop = tqdm.tqdm(range(0, 360, 4))
     output_images = []
     for num, azimuth in enumerate(loop):
@@ -100,14 +101,11 @@ def run():
         imsave('/tmp/_tmp_%04d.png' % num, image)
     make_gif(args.filename_output)
 
+    print("Saving the object after style transfer.")
     ##Saving the Object
     vertices = model.vertices
     faces = model.state_dict()['faces']
     textures = model.state_dict()['textures']
-
-    print(vertices.shape)
-    print(faces.shape)
-    print(textures.shape)
 
     filename = "stylized_" + args.filename_mesh.split("/")[-1]
     # filename = os.path.abspath(filename)
@@ -115,6 +113,7 @@ def run():
 
     neural_renderer.save_obj(filename_stylized_obj, torch.squeeze(vertices), torch.squeeze(faces), torch.squeeze(textures))
 
+    print("Generating texture mapping for the generated stylized object.")
     ##Mapping the texture
     filename = "stylized_and_textured_" + args.filename_mesh.split("/")[-1]
     filename_stylized_and_textured_obj = args.result_directory + "/" + filename
@@ -123,9 +122,6 @@ def run():
     map_texture_obj = MapTexture(filename_stylized_obj, args.filename_style, filename_stylized_and_textured_gif)
     map_texture_obj.train()
     map_texture_obj.save_obj(filename_stylized_and_textured_obj)
-
-
-
 
 if __name__ == '__main__':
     run()
