@@ -6,16 +6,6 @@ Abhishek Lalwani (alalwani@umass.edu) <br>
 Himanshu Gupta (hgupta@umass.edu) <br>
 Rushikesh Dudhat (rdudhat@umass.edu) <br>
 
-# Contribution Split
-
-Abhishek Lalwani (alalwani@umass.edu) (main.py in style_transfer_3d and minor bug fixes in the neural_renderer repository to ensure compatibility) </br>
-Himanshu Gupta (hgupta@umass.edu) (Run.py in style_transfer_3d in style_transfer_3d and the integration of the texture-mapping pipeline) </br>
-Rushikesh Dudhat (rdudhat@umass.edu) (StyleLoss.py and model_with_hooks.py in style_transfer_3d) </br>
-
-Please note that this contribution is only a rough estimate of the code written by the teammates.</br>
-In reality, all the code was worked on by everyone over iterations. </br>
-
-
 # System requirements
 
 GPU </br>
