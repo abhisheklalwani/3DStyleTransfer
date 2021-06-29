@@ -1,4 +1,4 @@
-# 3DStyleTransfer
+# 3D StyleTransfer
 
 This repository contains implementation of the Final Project of COMPSCI 674 course at UMass Amherst. <br>
 Contributors: <br>
